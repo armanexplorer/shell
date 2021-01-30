@@ -6,6 +6,7 @@
 #include<dirent.h>
 #include<fnmatch.h>
 #include<signal.h>
+#include<fcntl.h>
 #include<sys/stat.h>
 #include<sys/types.h> 
 #include<sys/wait.h> 
@@ -44,7 +45,10 @@ void terminate_signal_handler(int signum){
 	if(getpid() != MAIN_PID){
 		exit(0);
 	}
-}
+	printf("\n\n"); // Move to a new line
+    	rl_on_new_line(); // Regenerate the prompt on a newline
+    	rl_replace_line("", 0); // Clear the previous text
+    	rl_redisplay();}
 
 
 // Greeting shell during startup 
@@ -67,17 +71,6 @@ void getPromptIntro(char *intro_text)
 	strcpy(intro_text, str);
 } 
 
-
-// Function to print Current Directory.
-/**
-void printDir() 
-{ 
-	char cwd[1024]; 
-	getcwd(cwd, sizeof(cwd)); 
-	printf(CYN "\n(;ASH;) " RESET);
-	printf("%s:", cwd);
-}
-*/
 
 // Function to take input 
 int takeInput(char* str) 
@@ -340,6 +333,33 @@ int ownCmdHandler(char** parsed)
 	return 0; 
 } 
 
+// functoin for finding reidrect
+int parseRedirect(char *str, char *target){
+	char *temp_str;
+	strsep(&str, ">");
+//	printf("%s\n", str);
+//	strcpy(str,strsep(&str, ">"));
+	//printf("str is :%s\n", str);
+//	fflush(stdout);
+//	target = strsep(&str, ">");
+	temp_str = strsep(&str, ">");
+	if(temp_str != NULL){
+		int j=0;
+		for(int i=0;i<strlen(temp_str);i++)
+			if(temp_str[i] != ' ')
+				target[j++] = temp_str[i];
+		target[j] = '\0';
+//		strcpy(target,temp_str);
+	}
+	else
+		return 0;
+	//strcpy(target,"mohseni");
+	//target = NULL;
+	if(strsep(&str, ">") != NULL)
+		return -1;
+	return 1;
+}
+
 // function for finding pipe 
 int parsePipe(char* str, char** strpiped) 
 { 
@@ -372,12 +392,32 @@ void parseSpace(char* str, char** parsed)
 	} 
 } 
 
-int processString(char* str, char** parsed, char** parsedpipe) 
+int processString(char* str, char** parsed, char** parsedpipe, int *stdout_file_des) 
 { 
 
 	char* strpiped[2]; 
+	char target[30];
 	int piped = 0; 
+	int rdir = 0;
 
+	rdir = parseRedirect(str, target);
+	if( rdir == -1){
+		printf(RED "invalid use of redirect operator", 30);
+		return -1;
+	}
+	else if(rdir == 1){
+		int out_file_des = open(target, O_WRONLY|O_CREAT, 0600);
+		if(out_file_des == -1){
+			perror("error in open the file");
+			return -1;
+		}
+		*stdout_file_des = dup(1);
+		if(-1 == dup2(out_file_des, 1)){
+			perror("error in duplicating target file by stdout file descriptor");
+			return -1;
+		}
+		close(out_file_des);
+	}
 	piped = parsePipe(str, strpiped); 
 
 	if (piped) { 
@@ -402,7 +442,7 @@ int main()
 
 	char inputString[MAXCOM], *parsedArgs[MAXLIST]; 
 	char* parsedArgsPiped[MAXLIST]; 
-	int execFlag = 0; 
+	int execFlag = 0; int stdout_file_des=-1; 
 	init_shell(); 
 
 	while (1) { 
@@ -412,15 +452,25 @@ int main()
 		if (takeInput(inputString)) 
 			continue; 
 		// process 
-		execFlag = processString(inputString, 
-		parsedArgs, parsedArgsPiped); 
+		execFlag = processString(inputString, parsedArgs, parsedArgsPiped, &stdout_file_des); 
 
+		// error in syntax
+		if (execFlag == -1)
+			printf(RED, "invalid ues of redirecting", 30);
 		// execute 
 		if (execFlag == 1) 
 			execArgs(parsedArgs); 
 
 		if (execFlag == 2) 
 			execArgsPiped(parsedArgs, parsedArgsPiped); 
+		if(stdout_file_des != -1){
+			if( -1 == dup2(stdout_file_des, 1)){
+				perror("fail on assign '1' file descirptor to stdout");
+				exit(0);
+			}
+			close(stdout_file_des);
+			stdout_file_des = -1;
+		}
 	} 
 	return 0; 
 } 
