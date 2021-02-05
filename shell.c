@@ -48,7 +48,8 @@ void terminate_signal_handler(int signum){
 	printf("\n\n"); // Move to a new line
     	rl_on_new_line(); // Regenerate the prompt on a newline
     	rl_replace_line("", 0); // Clear the previous text
-    	rl_redisplay();}
+    	//rl_redisplay();
+}
 
 
 // Greeting shell during startup 
@@ -61,7 +62,7 @@ void init_shell()
 // Function to get prompt text
 void getPromptIntro(char *intro_text) 
 { 
-	char str[300] = "\nplease enter a command>";
+	char str[300] = CYN "\nplease enter a command> " RESET;
 	//char str[300] = "\n(;ASH;) ";
 	//char cwd[200]; 
 	//getcwd(cwd, sizeof(cwd)); 
@@ -88,82 +89,6 @@ int takeInput(char* str)
 	} 
 } 
 
-// Function where the system command is executed 
-void execArgs(char** parsed) 
-{ 
-	// Forking a child 
-	pid_t pid = fork(); 
-
-	if (pid == -1) { 
-		printf(RED "Failed forking child..\n", 30); 
-		return; 
-	} else if (pid == 0) { 
-		if (execvp(parsed[0], parsed) < 0) { 
-			printf(RED "Could not execute command..\n", 30); 
-		} 
-		exit(0); 
-	} else { 
-		// waiting for child to terminate 
-		wait(NULL); 
-		return; 
-	} 
-} 
-
-// Function where the piped system commands is executed 
-void execArgsPiped(char** parsed, char** parsedpipe) 
-{ 
-	// 0 is read end, 1 is write end 
-	int pipefd[2]; 
-	pid_t p1, p2; 
-
-	if (pipe(pipefd) < 0) { 
-		printf(RED "Pipe could not be initialized\n", 30); 
-		return; 
-	} 
-	p1 = fork(); 
-	if (p1 < 0) { 
-		printf(RED "Could not fork\n", 30); 
-		return; 
-	} 
-
-	if (p1 == 0) { 
-		// Child 1 executing.. 
-		// It only needs to write at the write end 
-		close(pipefd[0]); 
-		dup2(pipefd[1], STDOUT_FILENO); 
-		close(pipefd[1]); 
-
-		if (execvp(parsed[0], parsed) < 0) { 
-			printf("\nCould not execute command 1.."); 
-			exit(0); 
-		} 
-	} else { 
-		// Parent executing 
-		p2 = fork(); 
-
-		if (p2 < 0) { 
-			printf(RED "Could not fork\n", 30); 
-			return; 
-		} 
-
-		// Child 2 executing.. 
-		// It only needs to read at the read end 
-		if (p2 == 0) { 
-			close(pipefd[1]); 
-			dup2(pipefd[0], STDIN_FILENO); 
-			close(pipefd[0]); 
-			if (execvp(parsedpipe[0], parsedpipe) < 0) { 
-				printf(RED "Could not execute command 2..\n" ,30); 
-				exit(0); 
-			} 
-		} else { 
-			// parent executing, waiting for two children 
-			wait(NULL); 
-			wait(NULL); 
-		} 
-	} 
-} 
-
 // Help command builtin 
 void openHelp() 
 { 
@@ -181,8 +106,9 @@ void openHelp()
 	return; 
 } 
 
+
 // Function to execute builtin commands 
-int ownCmdHandler(char** parsed) 
+int ownCmdHandler(char** parsed, int just_check) 
 { 
 	int NoOfOwnCmds = 8, i, switchOwnArg = 0; 
 	char* ListOfOwnCmds[NoOfOwnCmds]; 
@@ -204,19 +130,22 @@ int ownCmdHandler(char** parsed)
 		} 
 	} 
 
+	if(just_check)
+		return i==NoOfOwnCmds?0:(i+1);
+
 	pid_t p1;
 	switch (switchOwnArg) { 
 	case 1:  // exit
-		printf("\nGoodbye\n"); 
+		printf(MAG "Goodbye!\n\n" RESET); 
 		exit(0); 
 	case 2:  // cd
-		if(parsed[2] != NULL){
-			printf(RED "illegal number of arguments\n" , 30);
+		if(parsed[2] != NULL || parsed[1] == NULL){
+			fprintf(stderr, RED "illegal number of arguments\n" RESET);
 			return 1;
 		}
 		if(chdir(parsed[1]) == -1){
 			if(errno == ENOENT)
-				printf(RED "directory '%s' does not exist\n", parsed[1], 30);
+				fprintf(stderr, RED "directory '%s' does not exist\n" RESET, parsed[1]);
 		} 
 		return 1; 
 	case 3:  // help
@@ -333,6 +262,94 @@ int ownCmdHandler(char** parsed)
 	return 0; 
 } 
 
+
+// Function where the system command is executed 
+void execArgs(char** parsed) 
+{
+	//printf("end of execarg\n");
+ 
+	// Forking a child 
+	pid_t pid = fork(); 
+
+	if (pid == -1) { 
+		fprintf(stderr, RED "Failed forking child..\n" RESET); 
+		return; 
+	} else if (pid == 0) { 
+		if (execvp(parsed[0], parsed) < 0) { 
+			fprintf(stderr, RED "Could not execute command..\n" RESET); 
+		} 
+		exit(0); 
+	} else { 
+		// waiting for child to terminate 
+		wait(NULL); 
+		return; 
+	} 
+} 
+
+// Function where the piped system commands is executed 
+void execArgsPiped(char** parsed, char** parsedpipe, int is_own_cmd) 
+{ 
+	// 0 is read end, 1 is write end 
+	int pipefd[2]; 
+	pid_t p1, p2; 
+
+	if (pipe(pipefd) < 0) { 
+		printf(RED "Pipe could not be initialized\n", 30); 
+		return; 
+	} 
+	p1 = fork(); 
+	if (p1 < 0) { 
+		printf(RED "Could not fork\n", 30); 
+		return; 
+	} 
+
+	if (p1 == 0) { 
+		// Child 1 executing.. 
+		// It only needs to write at the write end 
+		close(pipefd[0]); 
+		dup2(pipefd[1], STDOUT_FILENO); 
+		close(pipefd[1]); 
+
+		if (is_own_cmd){
+			ownCmdHandler(parsed, 0);
+			exit(0);
+		}
+		else if (execvp(parsed[0], parsed) < 0) { 
+			fprintf(stderr, RED "\nCould not execute command 1.." RESET); 
+			exit(0); 
+		}
+
+	} else { 
+		// Parent executing 
+		p2 = fork(); 
+
+		if (p2 < 0) { 
+			fprintf(stderr, RED "Could not fork\n" RESET); 
+			return; 
+		} 
+
+		// Child 2 executing.. 
+		// It only needs to read at the read end 
+		if (p2 == 0) { 
+			close(pipefd[1]); 
+			dup2(pipefd[0], STDIN_FILENO); 
+			close(pipefd[0]); 
+
+			if (execvp(parsedpipe[0], parsedpipe) < 0) { 
+				fprintf(stderr, RED "Could not execute command 2..\n" RESET); 
+				exit(0); 
+			} 
+
+		} else { 
+			// parent executing, waiting for two children 
+			//fprintf(stderr, "we are before waits\n");
+			wait(NULL); 
+			wait(NULL); 
+		} 
+	} 
+} 
+
+
 // functoin for finding reidrect
 int parseRedirect(char *str, char *target){
 	char *temp_str;
@@ -402,7 +419,7 @@ int processString(char* str, char** parsed, char** parsedpipe, int *stdout_file_
 
 	rdir = parseRedirect(str, target);
 	if( rdir == -1){
-		printf(RED "invalid use of redirect operator", 30);
+		fprintf(stderr, RED "invalid use of redirect operator" RESET);
 		return -1;
 	}
 	else if(rdir == 1){
@@ -418,21 +435,21 @@ int processString(char* str, char** parsed, char** parsedpipe, int *stdout_file_
 		}
 		close(out_file_des);
 	}
+	//printf("str is : %s\n", str);
 	piped = parsePipe(str, strpiped); 
-
+	//printf("the piped is: %d\n", piped);
 	if (piped) { 
 		parseSpace(strpiped[0], parsed); 
 		parseSpace(strpiped[1], parsedpipe); 
 
 	} else { 
-
 		parseSpace(str, parsed); 
 	} 
 
-	if (ownCmdHandler(parsed)) 
-		return 0; 
-	else
-		return 1 + piped; 
+	if (ownCmdHandler(parsed, 1)) 
+		return piped;
+
+	return 2 + piped; 
 } 
 
 int main() 
@@ -453,16 +470,27 @@ int main()
 			continue; 
 		// process 
 		execFlag = processString(inputString, parsedArgs, parsedArgsPiped, &stdout_file_des); 
-
+		//printf("excecFlag is : %d\n", execFlag);
 		// error in syntax
-		if (execFlag == -1)
-			printf(RED, "invalid ues of redirecting", 30);
-		// execute 
-		if (execFlag == 1) 
+		if (execFlag == -1);
+
+		// this is ownCmd without piped
+		if (execFlag == 0)
+			ownCmdHandler(parsedArgs, 0);
+
+		// this is ownCmd with piped
+		if (execFlag == 1)
+			execArgsPiped(parsedArgs, parsedArgsPiped, 1);
+
+		// run in execpv without piped
+		if (execFlag == 2) 
 			execArgs(parsedArgs); 
 
-		if (execFlag == 2) 
-			execArgsPiped(parsedArgs, parsedArgsPiped); 
+		// run in execpv with piped
+		if (execFlag == 3) 
+			execArgsPiped(parsedArgs, parsedArgsPiped, 0); 
+
+		// if we had redirecting, reset the settings
 		if(stdout_file_des != -1){
 			if( -1 == dup2(stdout_file_des, 1)){
 				perror("fail on assign '1' file descirptor to stdout");
