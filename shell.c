@@ -39,18 +39,23 @@
 #define clear() printf("\033[H\033[J") 
 
 pid_t MAIN_PID;
+int command_is_in_process=0;
 
-// Signal Handler
-void terminate_signal_handler(int signum){
-	if(getpid() != MAIN_PID){
+// Parent SIGINT Handler
+void parent_terminate_signal_handler(int signum){
+	if (getpid()!=MAIN_PID)
 		exit(0);
+	if(!command_is_in_process){
+		printf("\n\n"); // Move to a new line
+	    	rl_on_new_line(); // Regenerate the prompt on a newline
+	    	rl_replace_line("", 0); // Clear the previous text
+		printf(CYN); // Change color of default prompt text
+	    	rl_redisplay(); // Print default prompt text again
 	}
-	printf("\n\n"); // Move to a new line
-    	rl_on_new_line(); // Regenerate the prompt on a newline
-    	rl_replace_line("", 0); // Clear the previous text
-    	//rl_redisplay();
+	else{
+		printf("\n");
+	}
 }
-
 
 // Greeting shell during startup 
 void init_shell() 
@@ -58,20 +63,12 @@ void init_shell()
 	clear();
 } 
 
-
 // Function to get prompt text
 void getPromptIntro(char *intro_text) 
 { 
 	char str[300] = CYN "\nplease enter a command> " RESET;
-	//char str[300] = "\n(;ASH;) ";
-	//char cwd[200]; 
-	//getcwd(cwd, sizeof(cwd)); 
-	//strcat(str, "\n(;ASH;) ");
-	//strcat(str, cwd);
-	//strcat(str, "# ");
 	strcpy(intro_text, str);
 } 
-
 
 // Function to take input 
 int takeInput(char* str) 
@@ -92,15 +89,17 @@ int takeInput(char* str)
 // Help command builtin 
 void openHelp() 
 { 
-	puts("\n***WELCOME TO MY SHELL HELP***"
-		"\nCopyright @ Suprotik Dey"
-		"\n-Use the shell at your own risk..."
+	puts("\n***WELCOME TO THE SHELL HELP***"
 		"\nList of Commands supported:"
 		"\n>cd"
 		"\n>ls"
+		"\n>lsdir"
+		"\n>rename"
+		"\n>ash"
 		"\n>exit"
 		"\n>all other general commands available in UNIX shell"
 		"\n>pipe handling"
+		"\n>redirect output handling"
 		"\n>improper space handling"); 
 
 	return; 
@@ -266,15 +265,13 @@ int ownCmdHandler(char** parsed, int just_check)
 // Function where the system command is executed 
 void execArgs(char** parsed) 
 {
-	//printf("end of execarg\n");
- 
 	// Forking a child 
 	pid_t pid = fork(); 
 
 	if (pid == -1) { 
 		fprintf(stderr, RED "Failed forking child..\n" RESET); 
 		return; 
-	} else if (pid == 0) { 
+	} else if (pid == 0) {  // child
 		if (execvp(parsed[0], parsed) < 0) { 
 			fprintf(stderr, RED "Could not execute command..\n" RESET); 
 		} 
@@ -307,7 +304,10 @@ void execArgsPiped(char** parsed, char** parsedpipe, int is_own_cmd)
 		// Child 1 executing.. 
 		// It only needs to write at the write end 
 		close(pipefd[0]); 
-		dup2(pipefd[1], STDOUT_FILENO); 
+		if(dup2(pipefd[1], STDOUT_FILENO) == -1){
+			perror(RED "dup 2 falied" RESET);
+			exit(0);
+		} 
 		close(pipefd[1]); 
 
 		if (is_own_cmd){
@@ -332,7 +332,10 @@ void execArgsPiped(char** parsed, char** parsedpipe, int is_own_cmd)
 		// It only needs to read at the read end 
 		if (p2 == 0) { 
 			close(pipefd[1]); 
-			dup2(pipefd[0], STDIN_FILENO); 
+			if(dup2(pipefd[0], STDIN_FILENO) == -1){
+				perror(RED "dup2 failed" RESET);
+				exit(0);
+			}
 			close(pipefd[0]); 
 
 			if (execvp(parsedpipe[0], parsedpipe) < 0) { 
@@ -342,7 +345,11 @@ void execArgsPiped(char** parsed, char** parsedpipe, int is_own_cmd)
 
 		} else { 
 			// parent executing, waiting for two children 
-			//fprintf(stderr, "we are before waits\n");
+
+			// parent must close the pipes before wait
+			for(int i=0;i<2;i++)
+           			close(pipefd[i]);
+
 			wait(NULL); 
 			wait(NULL); 
 		} 
@@ -354,11 +361,6 @@ void execArgsPiped(char** parsed, char** parsedpipe, int is_own_cmd)
 int parseRedirect(char *str, char *target){
 	char *temp_str;
 	strsep(&str, ">");
-//	printf("%s\n", str);
-//	strcpy(str,strsep(&str, ">"));
-	//printf("str is :%s\n", str);
-//	fflush(stdout);
-//	target = strsep(&str, ">");
 	temp_str = strsep(&str, ">");
 	if(temp_str != NULL){
 		int j=0;
@@ -366,12 +368,9 @@ int parseRedirect(char *str, char *target){
 			if(temp_str[i] != ' ')
 				target[j++] = temp_str[i];
 		target[j] = '\0';
-//		strcpy(target,temp_str);
 	}
 	else
 		return 0;
-	//strcpy(target,"mohseni");
-	//target = NULL;
 	if(strsep(&str, ">") != NULL)
 		return -1;
 	return 1;
@@ -435,9 +434,7 @@ int processString(char* str, char** parsed, char** parsedpipe, int *stdout_file_
 		}
 		close(out_file_des);
 	}
-	//printf("str is : %s\n", str);
 	piped = parsePipe(str, strpiped); 
-	//printf("the piped is: %d\n", piped);
 	if (piped) { 
 		parseSpace(strpiped[0], parsed); 
 		parseSpace(strpiped[1], parsedpipe); 
@@ -455,7 +452,7 @@ int processString(char* str, char** parsed, char** parsedpipe, int *stdout_file_
 int main() 
 { 
 	MAIN_PID = getpid();
-	signal(SIGINT, terminate_signal_handler);
+	signal(SIGINT, parent_terminate_signal_handler);
 
 	char inputString[MAXCOM], *parsedArgs[MAXLIST]; 
 	char* parsedArgsPiped[MAXLIST]; 
@@ -463,14 +460,14 @@ int main()
 	init_shell(); 
 
 	while (1) { 
-		// print shell line 
-		//printDir(); 
-		// take input 
+		command_is_in_process = 0;
 		if (takeInput(inputString)) 
 			continue; 
+		command_is_in_process = 1;
+
 		// process 
 		execFlag = processString(inputString, parsedArgs, parsedArgsPiped, &stdout_file_des); 
-		//printf("excecFlag is : %d\n", execFlag);
+
 		// error in syntax
 		if (execFlag == -1);
 
@@ -482,11 +479,11 @@ int main()
 		if (execFlag == 1)
 			execArgsPiped(parsedArgs, parsedArgsPiped, 1);
 
-		// run in execpv without piped
+		// run in execvp without piped
 		if (execFlag == 2) 
 			execArgs(parsedArgs); 
 
-		// run in execpv with piped
+		// run in execvp with piped
 		if (execFlag == 3) 
 			execArgsPiped(parsedArgs, parsedArgsPiped, 0); 
 
